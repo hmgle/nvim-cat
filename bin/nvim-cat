@@ -1,0 +1,199 @@
+#!/usr/bin/env bash
+
+# nvim-cat command line wrapper
+# A syntax-highlighted file viewer powered by Neovim
+
+set -euo pipefail
+
+# Detect installation path and set up Lua module path
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+INSTALL_PREFIX="$(dirname "$SCRIPT_DIR")"
+
+# Determine Lua module path based on installation type
+if [[ "$INSTALL_PREFIX" == "$HOME/.local" ]]; then
+    # User installation
+    LUA_PATH_PREFIX="$HOME/.local/share/nvim-cat/lua"
+elif [[ -d "$INSTALL_PREFIX/share/nvim-cat/lua" ]]; then
+    # System installation
+    LUA_PATH_PREFIX="$INSTALL_PREFIX/share/nvim-cat/lua"
+elif [[ -d "$SCRIPT_DIR/../lua" ]]; then
+    # Development/source installation
+    LUA_PATH_PREFIX="$SCRIPT_DIR/../lua"
+else
+    echo "Error: Cannot find nvim-cat Lua modules" >&2
+    echo "Please ensure nvim-cat is properly installed" >&2
+    exit 1
+fi
+
+# Default options
+SHOW_LINE_NUMBERS=true
+PAGING=true
+LINES_PER_PAGE=50
+THEME="auto"
+COLORSCHEME=""
+SHOW_HEADER=false
+USE_GLOBAL_BG=true
+
+# Parse command line arguments
+usage() {
+    cat << EOF
+nvim-cat - Syntax-highlighted file viewer powered by Neovim
+
+USAGE:
+    nvim-cat [OPTIONS] <FILE|PATTERN>...
+
+OPTIONS:
+    -n, --line-numbers      Show line numbers (default: true)
+    -N, --no-line-numbers   Hide line numbers
+    -p, --paging            Enable paging (default: true)
+    -P, --no-paging         Disable paging
+    -l, --lines-per-page N  Lines per page (default: 50)
+    -t, --theme THEME       Color theme (auto, dark, light)
+    -c, --colorscheme NAME  Neovim colorscheme to use
+    -b, --background        Use global background color (default: true)
+    -B, --no-background     Disable global background color
+    -H, --header           Show file header
+    -h, --help             Show this help
+    -v, --version          Show version
+
+EXAMPLES:
+    nvim-cat file.lua                    # View single file
+    nvim-cat *.js                        # View all JavaScript files
+    nvim-cat -N --no-paging file.py     # No line numbers, no paging
+    nvim-cat --theme dark file.json     # Use dark theme
+
+EOF
+}
+
+version() {
+    echo "nvim-cat v0.1.0"
+}
+
+# Parse arguments
+FILES=()
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        -v|--version)
+            version
+            exit 0
+            ;;
+        -n|--line-numbers)
+            SHOW_LINE_NUMBERS=true
+            shift
+            ;;
+        -N|--no-line-numbers)
+            SHOW_LINE_NUMBERS=false
+            shift
+            ;;
+        -p|--paging)
+            PAGING=true
+            shift
+            ;;
+        -P|--no-paging)
+            PAGING=false
+            shift
+            ;;
+        -l|--lines-per-page)
+            LINES_PER_PAGE="$2"
+            shift 2
+            ;;
+        -t|--theme)
+            THEME="$2"
+            shift 2
+            ;;
+        -c|--colorscheme)
+            COLORSCHEME="$2"
+            shift 2
+            ;;
+        -b|--background)
+            USE_GLOBAL_BG=true
+            shift
+            ;;
+        -B|--no-background)
+            USE_GLOBAL_BG=false
+            shift
+            ;;
+        -H|--header)
+            SHOW_HEADER=true
+            shift
+            ;;
+        -*)
+            echo "Unknown option: $1" >&2
+            echo "Use --help for usage information" >&2
+            exit 1
+            ;;
+        *)
+            FILES+=("$1")
+            shift
+            ;;
+    esac
+done
+
+# Check if files were provided
+if [[ ${#FILES[@]} -eq 0 ]]; then
+    echo "Error: No files specified" >&2
+    echo "Use --help for usage information" >&2
+    exit 1
+fi
+
+# Check if nvim is available
+if ! command -v nvim &> /dev/null; then
+    echo "Error: Neovim (nvim) is not installed or not in PATH" >&2
+    exit 1
+fi
+
+# Create temporary Lua script to call nvim-cat
+TEMP_SCRIPT=$(mktemp)
+trap "rm -f $TEMP_SCRIPT" EXIT
+
+cat > "$TEMP_SCRIPT" << EOF
+-- Add the nvim-cat Lua modules to the path
+local lua_path = '$LUA_PATH_PREFIX/?.lua;$LUA_PATH_PREFIX/?/init.lua'
+package.path = lua_path .. ';' .. package.path
+
+-- Load nvim-cat
+local nvim_cat = require('nvim-cat')
+
+-- Setup with options
+nvim_cat.setup({
+    show_line_numbers = $SHOW_LINE_NUMBERS,
+    paging = {
+        enabled = $PAGING,
+        lines_per_page = $LINES_PER_PAGE
+    },
+    theme = "$THEME",
+    colorscheme = $([ -n "$COLORSCHEME" ] && echo "\"$COLORSCHEME\"" || echo "nil"),
+    use_global_background = $USE_GLOBAL_BG
+})
+
+-- Process each file
+local files = {
+EOF
+
+# Add files to the Lua script
+for file in "${FILES[@]}"; do
+    echo "    \"$file\"," >> "$TEMP_SCRIPT"
+done
+
+cat >> "$TEMP_SCRIPT" << EOF
+}
+
+for i, file in ipairs(files) do
+    if #files > 1 and i > 1 then
+        print() -- Empty line between files
+    end
+    
+    local opts = {
+        show_header = $SHOW_HEADER and #files > 1
+    }
+    
+    nvim_cat.cat(file, opts)
+end
+EOF
+
+# Run Neovim with the script
+exec nvim --headless -l "$TEMP_SCRIPT"

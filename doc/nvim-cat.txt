@@ -1,0 +1,197 @@
+*nvim-cat.txt*	Syntax-highlighted file viewer for Neovim
+
+==============================================================================
+CONTENTS						*nvim-cat-contents*
+
+1. Introduction				|nvim-cat-introduction|
+2. Installation				|nvim-cat-installation|
+3. Usage				|nvim-cat-usage|
+4. Commands				|nvim-cat-commands|
+5. Configuration			|nvim-cat-configuration|
+6. API					|nvim-cat-api|
+7. Command Line Tool			|nvim-cat-cli|
+8. About				|nvim-cat-about|
+
+==============================================================================
+1. INTRODUCTION					*nvim-cat-introduction*
+
+nvim-cat is a Neovim plugin that provides syntax-highlighted file viewing
+similar to `bat` and `ccat`, but powered by Neovim's built-in syntax
+highlighting engine. It can be used both within Neovim and as a standalone
+command-line tool.
+
+Features:
+- Syntax highlighting powered by Neovim's treesitter and built-in highlighters
+- Support for a wide range of file types
+- Configurable line numbers and themes
+- Automatic paging for long files
+- Command-line interface for terminal usage
+
+==============================================================================
+2. INSTALLATION					*nvim-cat-installation*
+
+Using lazy.nvim: >
+    {
+      "your-username/nvim-cat",
+      config = function()
+        require("nvim-cat").setup({
+          -- Configuration options
+        })
+      end,
+    }
+<
+
+Using packer.nvim: >
+    use {
+      "your-username/nvim-cat",
+      config = function()
+        require("nvim-cat").setup()
+      end
+    }
+<
+
+==============================================================================
+3. USAGE					*nvim-cat-usage*
+
+Basic usage within Neovim:
+>
+    :NvimCat filename.js
+    :NvimCat *.lua
+    :NvimCat path/to/file.py
+<
+
+Command line usage (if installed):
+>
+    nvim-cat filename.js
+    nvim-cat *.py
+    nvim-cat --no-line-numbers file.json
+<
+
+==============================================================================
+4. COMMANDS					*nvim-cat-commands*
+
+							*:NvimCat*
+:NvimCat {file|pattern}
+		Display file(s) with syntax highlighting. Supports glob
+		patterns to view multiple files.
+
+							*:NvimCatHelp*
+:NvimCatHelp
+		Show help information.
+
+							*:NvimCatVersion*
+:NvimCatVersion
+		Show version information.
+
+==============================================================================
+5. CONFIGURATION				*nvim-cat-configuration*
+
+Default configuration: >
+    require("nvim-cat").setup({
+      -- Display options
+      show_line_numbers = true,
+      show_git_status = false,
+      
+      -- Paging settings
+      paging = {
+        enabled = true,
+        lines_per_page = 50
+      },
+      
+      -- Theme settings
+      theme = "auto", -- "auto", "dark", "light" or specific theme name
+      
+      -- File type mappings
+      filetype_mappings = {
+        [".conf"] = "config",
+        [".env"] = "sh"
+      }
+    })
+<
+
+Configuration options:
+
+*nvim-cat-show_line_numbers*
+show_line_numbers	(boolean, default: true)
+		Show line numbers in the output.
+
+*nvim-cat-show_git_status*
+show_git_status		(boolean, default: false)
+		Show git modification status (not yet implemented).
+
+*nvim-cat-paging*
+paging			(table)
+		Paging configuration:
+		- enabled: Enable/disable paging (boolean, default: true)
+		- lines_per_page: Lines per page (number, default: 50)
+
+*nvim-cat-theme*
+theme			(string, default: "auto")
+		Color theme. Can be "auto", "dark", "light", or a specific
+		Neovim colorscheme name.
+
+*nvim-cat-filetype_mappings*
+filetype_mappings	(table)
+		Custom file extension to filetype mappings.
+
+==============================================================================
+6. API						*nvim-cat-api*
+
+							*nvim-cat.setup()*
+nvim-cat.setup({opts})
+		Setup nvim-cat with configuration options.
+
+							*nvim-cat.cat()*
+nvim-cat.cat({pattern}, {opts})
+		Display file(s) matching the pattern with syntax highlighting.
+		
+		Parameters:
+		  {pattern}  File path or glob pattern
+		  {opts}     Optional table with display options
+
+							*nvim-cat.version()*
+nvim-cat.version()
+		Returns version string.
+
+							*nvim-cat.help()*
+nvim-cat.help()
+		Returns help text.
+
+==============================================================================
+7. COMMAND LINE TOOL				*nvim-cat-cli*
+
+nvim-cat provides a command-line tool that can be used outside of Neovim.
+
+Usage: >
+    nvim-cat [OPTIONS] <FILE|PATTERN>...
+<
+
+Options:
+    -n, --line-numbers      Show line numbers (default: true)
+    -N, --no-line-numbers   Hide line numbers
+    -p, --paging            Enable paging (default: true)
+    -P, --no-paging         Disable paging
+    -l, --lines-per-page N  Lines per page (default: 50)
+    -t, --theme THEME       Color theme (auto, dark, light)
+    -H, --header           Show file header
+    -h, --help             Show help
+    -v, --version          Show version
+
+Examples: >
+    nvim-cat file.lua
+    nvim-cat *.js
+    nvim-cat -N --no-paging file.py
+    nvim-cat --theme dark file.json
+<
+
+==============================================================================
+8. ABOUT					*nvim-cat-about*
+
+nvim-cat is developed as an open-source project. It leverages Neovim's
+powerful syntax highlighting capabilities to provide a modern alternative
+to traditional file viewing tools.
+
+Repository: https://github.com/hmgle/nvim-cat
+License: MIT
+
+vim:tw=78:ts=8:ft=help:norl:
