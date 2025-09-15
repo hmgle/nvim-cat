@@ -7,6 +7,20 @@ local utils = require("nvim-cat.utils")
 local filedetect = require("nvim-cat.filedetect")
 local colorscheme = require("nvim-cat.colorscheme")
 
+local term_dimensions = {
+  lines = 24,
+  cols = 80,
+}
+
+---Set terminal dimensions from the calling script
+---@param lines number Terminal height
+---@param cols number Terminal width
+function M.set_term_dimensions(lines, cols)
+  term_dimensions.lines = lines or term_dimensions.lines
+  term_dimensions.cols = cols or term_dimensions.cols
+end
+
+
 ---Setup nvim-cat with user configuration
 ---@param opts? NvimCatConfig User configuration options
 function M.setup(opts)
@@ -114,8 +128,9 @@ function M.cat_single_file(filepath, opts)
   })
   
   -- Display with paging if needed
-  if paging_enabled and #output_lines > lines_per_page then
-    M.display_paged(output_lines, lines_per_page, use_global_bg)
+  -- Page if content height is greater than terminal height (minus 1 for status bar)
+  if paging_enabled and #output_lines > (term_dimensions.lines - 1) then
+    M.display_paged_interactive(output_lines, { filepath = filepath })
   else
     M.display_immediate(output_lines, use_global_bg)
   end
@@ -149,7 +164,7 @@ function M.display_immediate(lines, use_global_bg)
   
   -- Optimized output with batched writes
   local display_lines = {}
-  local terminal_width = use_global_bg and (tonumber(os.getenv("COLUMNS")) or 80) or nil
+  local terminal_width = use_global_bg and term_dimensions.cols or nil
   
   -- Start global background if requested
   if use_global_bg then
@@ -176,69 +191,78 @@ function M.display_immediate(lines, use_global_bg)
   io.flush()
 end
 
----Display lines with paging
+
+--Display lines with interactive paging
 ---@param lines string[] Lines to display
----@param lines_per_page number Lines per page
----@param use_global_bg? boolean Whether to use global background
-function M.display_paged(lines, lines_per_page, use_global_bg)
+---@param opts table Display options including filepath
+function M.display_paged_interactive(lines, opts)
   local output = require("nvim-cat.output")
   local total_lines = #lines
-  local total_pages = math.ceil(total_lines / lines_per_page)
-  local current_page = 1
-  
-  -- Get terminal width for background padding
-  local terminal_width = tonumber(os.getenv("COLUMNS")) or 80
-  
-  -- Start global background if requested
-  if use_global_bg then
-    io.write(output.start_global_background())
-  end
-  
-  while current_page <= total_pages do
-    local start_line = (current_page - 1) * lines_per_page + 1
-    local end_line = math.min(current_page * lines_per_page, total_lines)
-    
-    -- Display current page
-    for i = start_line, end_line do
-      local display_line = lines[i]
-      if use_global_bg then
-        display_line = output.apply_line_background(lines[i], terminal_width)
-      end
-      io.write(display_line .. "\n")
+  local top_line = 1
+
+  -- Get terminal dimensions
+  local view_height = term_dimensions.lines - 1 -- Account for status bar
+  local view_width = term_dimensions.cols
+
+  local function redraw()
+    -- Clear screen
+    io.write("\27[2J\27[H")
+    io.flush()
+
+    -- Determine visible lines
+    local end_line = math.min(top_line + view_height - 1, total_lines)
+
+    -- Display lines
+    for i = top_line, end_line do
+      io.write(lines[i] .. "\n")
     end
     io.flush()
+
+    -- Draw status bar
+    local percentage = math.floor((end_line / total_lines) * 100)
+    local status_text = string.format(" %s | %d-%d/%d (%d%%) | j/k, space/f/b, q to quit ",
+      opts.filepath, top_line, end_line, total_lines, percentage)
     
-    -- Show paging info and wait for input
-    if current_page < total_pages then
-      -- Temporarily reset background for paging prompt
-      if use_global_bg then
-        io.write(output.end_global_background())
-      end
-      
-      local progress = utils.progress_bar(current_page, total_pages, 20)
-      io.write(string.format("\n%s Page %d/%d - Press ENTER for next page, 'q' to quit: ", 
-        progress, current_page, total_pages))
-      io.flush()
-      
-      local input = io.read()
-      if input == "q" or input == "Q" then
-        break
-      end
-      
-      -- Restart background for next page
-      if use_global_bg then
-        io.write(output.start_global_background())
-      end
-      
-      current_page = current_page + 1
-    else
-      current_page = current_page + 1
+    -- Pad status bar to full width
+    local padding = view_width - #status_text
+    if padding > 0 then
+      status_text = status_text .. string.rep(" ", padding)
     end
+
+    -- Inverse video for status bar
+    io.write("\27[7m" .. status_text .. "\27[0m")
+    io.flush()
   end
-  
-  -- End global background if used
-  if use_global_bg then
-    io.write(output.end_global_background())
+
+  -- Initial draw
+  redraw()
+
+  -- Main input loop
+  while true do
+    -- Set terminal to raw mode
+    os.execute("stty raw -echo")
+    local char = io.read(1)
+    -- Restore terminal mode
+    os.execute("stty -raw echo")
+
+    if char == 'q' or char == 'Q' then
+      -- Clear screen on exit
+      io.write("\27[2J\27[H")
+      io.flush()
+      break
+    elseif char == 'j' then
+      top_line = math.min(top_line + 1, total_lines - view_height + 1)
+      redraw()
+    elseif char == 'k' then
+      top_line = math.max(top_line - 1, 1)
+      redraw()
+    elseif char == ' ' or char == 'f' then -- Page down
+      top_line = math.min(top_line + view_height, total_lines - view_height + 1)
+      redraw()
+    elseif char == 'b' then -- Page up
+      top_line = math.max(top_line - view_height, 1)
+      redraw()
+    end
   end
 end
 
@@ -247,6 +271,7 @@ end
 function M.version()
   return "nvim-cat v0.1.0"
 end
+
 
 ---Get help information
 ---@return string Help text

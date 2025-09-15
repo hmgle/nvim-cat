@@ -196,4 +196,13 @@ end
 EOF
 
 # Run Neovim with the script
+# Get terminal dimensions
+TERMINAL_LINES=$(tput lines)
+TERMINAL_COLUMNS=$(tput cols)
+
+# Pass terminal dimensions to the Lua script
+sed -i.bak "s/-- Load nvim-cat/-- Set terminal dimensions\nlocal term_lines = ${TERMINAL_LINES}\nlocal term_cols = ${TERMINAL_COLUMNS}\n\n-- Load nvim-cat/" "$TEMP_SCRIPT"
+sed -i.bak "s/nvim_cat.setup({/nvim_cat.set_term_dimensions(term_lines, term_cols)\nnvim_cat.setup({/" "$TEMP_SCRIPT"
+rm -f "$TEMP_SCRIPT.bak"
+
 exec nvim --headless -l "$TEMP_SCRIPT"
