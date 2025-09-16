@@ -148,7 +148,8 @@ fi
 
 # Create temporary Lua script to call nvim-cat
 TEMP_SCRIPT=$(mktemp)
-trap "rm -f $TEMP_SCRIPT" EXIT
+TEMP_SCRIPT_NEW=""
+trap 'rm -f "$TEMP_SCRIPT" "$TEMP_SCRIPT_NEW"' EXIT
 
 cat > "$TEMP_SCRIPT" << EOF
 -- Add the nvim-cat Lua modules to the path
@@ -196,13 +197,43 @@ end
 EOF
 
 # Run Neovim with the script
-# Get terminal dimensions
-TERMINAL_LINES=$(tput lines)
-TERMINAL_COLUMNS=$(tput cols)
+# Get terminal dimensions - try multiple methods
+TERMINAL_LINES=$(tput lines 2>/dev/null || echo "24")
+TERMINAL_COLUMNS=$(tput cols 2>/dev/null || echo "80")
+
+# If tput fails, try stty
+if [ "$TERMINAL_LINES" = "24" ] && [ "$TERMINAL_COLUMNS" = "80" ]; then
+    # Try stty as fallback
+    if STTY_SIZE=$(stty size 2>/dev/null); then
+        TERMINAL_LINES=$(echo "$STTY_SIZE" | cut -d' ' -f1)
+        TERMINAL_COLUMNS=$(echo "$STTY_SIZE" | cut -d' ' -f2)
+    fi
+fi
+
+# Validate terminal dimensions are numeric
+if ! [[ "$TERMINAL_LINES" =~ ^[0-9]+$ ]]; then
+    TERMINAL_LINES=24
+fi
+if ! [[ "$TERMINAL_COLUMNS" =~ ^[0-9]+$ ]]; then
+    TERMINAL_COLUMNS=80
+fi
+
+# Ensure minimum dimensions
+if [ "$TERMINAL_LINES" -lt 10 ]; then
+    TERMINAL_LINES=24
+fi
+if [ "$TERMINAL_COLUMNS" -lt 40 ]; then
+    TERMINAL_COLUMNS=80
+fi
 
 # Pass terminal dimensions to the Lua script
-sed -i.bak "s/-- Load nvim-cat/-- Set terminal dimensions\nlocal term_lines = ${TERMINAL_LINES}\nlocal term_cols = ${TERMINAL_COLUMNS}\n\n-- Load nvim-cat/" "$TEMP_SCRIPT"
-sed -i.bak "s/nvim_cat.setup({/nvim_cat.set_term_dimensions(term_lines, term_cols)\nnvim_cat.setup({/" "$TEMP_SCRIPT"
-rm -f "$TEMP_SCRIPT.bak"
+# Create a new temp file to avoid race conditions
+TEMP_SCRIPT_NEW=$(mktemp)
+cat "$TEMP_SCRIPT" | \
+    sed "s/-- Load nvim-cat/-- Set terminal dimensions\nlocal term_lines = ${TERMINAL_LINES}\nlocal term_cols = ${TERMINAL_COLUMNS}\n\n-- Load nvim-cat/" | \
+    sed "s/nvim_cat.setup({/nvim_cat.set_term_dimensions(term_lines, term_cols)\nnvim_cat.setup({/" > "$TEMP_SCRIPT_NEW"
+
+# Replace original script atomically
+mv "$TEMP_SCRIPT_NEW" "$TEMP_SCRIPT"
 
 exec nvim --headless -l "$TEMP_SCRIPT"

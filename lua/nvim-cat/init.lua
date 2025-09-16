@@ -204,6 +204,31 @@ function M.display_paged_interactive(lines, opts)
   local view_height = term_dimensions.lines - 1 -- Account for status bar
   local view_width = term_dimensions.cols
 
+  -- Terminal state management for safe recovery
+  local terminal_state_saved = false
+  local function save_terminal_state()
+    if not terminal_state_saved then
+      os.execute("stty -g > /tmp/nvim-cat-stty-$$.save 2>/dev/null")
+      terminal_state_saved = true
+    end
+  end
+
+  local function restore_terminal_state()
+    if terminal_state_saved then
+      os.execute("stty $(cat /tmp/nvim-cat-stty-$$.save 2>/dev/null) 2>/dev/null")
+      os.execute("rm -f /tmp/nvim-cat-stty-$$.save 2>/dev/null")
+      terminal_state_saved = false
+    end
+  end
+
+  -- Set up signal handler for cleanup
+  local function cleanup_and_exit()
+    restore_terminal_state()
+    io.write("\27[2J\27[H") -- Clear screen
+    io.flush()
+    os.exit(0)
+  end
+
   local function redraw()
     -- Clear screen
     io.write("\27[2J\27[H")
@@ -220,9 +245,9 @@ function M.display_paged_interactive(lines, opts)
 
     -- Draw status bar
     local percentage = math.floor((end_line / total_lines) * 100)
-    local status_text = string.format(" %s | %d-%d/%d (%d%%) | j/k, space/f/b, q to quit ",
+    local status_text = string.format(" %s | %d-%d/%d (%d%%) | j/k, space/f/b, g/G, q to quit ",
       opts.filepath, top_line, end_line, total_lines, percentage)
-    
+
     -- Pad status bar to full width
     local padding = view_width - #status_text
     if padding > 0 then
@@ -234,36 +259,92 @@ function M.display_paged_interactive(lines, opts)
     io.flush()
   end
 
+  -- Calculate safe boundaries for paging
+  local function safe_page_down()
+    if total_lines <= view_height then
+      -- Content fits in one screen, no need to scroll
+      return top_line
+    end
+    return math.min(top_line + view_height, math.max(1, total_lines - view_height + 1))
+  end
+
+  local function safe_page_up()
+    return math.max(top_line - view_height, 1)
+  end
+
+  local function safe_line_down()
+    if total_lines <= view_height then
+      -- Content fits in one screen, no need to scroll
+      return top_line
+    end
+    return math.min(top_line + 1, math.max(1, total_lines - view_height + 1))
+  end
+
+  local function safe_line_up()
+    return math.max(top_line - 1, 1)
+  end
+
   -- Initial draw
   redraw()
 
+  -- Save terminal state before entering raw mode
+  save_terminal_state()
+
   -- Main input loop
   while true do
-    -- Set terminal to raw mode
-    os.execute("stty raw -echo")
-    local char = io.read(1)
-    -- Restore terminal mode
-    os.execute("stty -raw echo")
+    -- Set terminal to raw mode with error handling
+    local ok = os.execute("stty raw -echo 2>/dev/null")
+    local char = ok and io.read(1) or 'q'
+    -- Restore terminal mode with error handling
+    os.execute("stty -raw echo 2>/dev/null")
 
     if char == 'q' or char == 'Q' then
-      -- Clear screen on exit
-      io.write("\27[2J\27[H")
-      io.flush()
+      -- Restore terminal and exit cleanly
+      restore_terminal_state()
+      cleanup_and_exit()
       break
     elseif char == 'j' then
-      top_line = math.min(top_line + 1, total_lines - view_height + 1)
+      top_line = safe_line_down()
       redraw()
     elseif char == 'k' then
-      top_line = math.max(top_line - 1, 1)
+      top_line = safe_line_up()
       redraw()
     elseif char == ' ' or char == 'f' then -- Page down
-      top_line = math.min(top_line + view_height, total_lines - view_height + 1)
+      top_line = safe_page_down()
       redraw()
     elseif char == 'b' then -- Page up
-      top_line = math.max(top_line - view_height, 1)
+      top_line = safe_page_up()
       redraw()
+    elseif char == 'g' then -- Go to top
+      top_line = 1
+      redraw()
+    elseif char == 'G' then -- Go to bottom
+      top_line = math.max(1, total_lines - view_height + 1)
+      redraw()
+    elseif char == '\27' then -- ESC key
+      -- Read potential arrow key sequence
+      local seq1 = io.read(1)
+      local seq2 = io.read(1)
+      if seq1 == '[' then
+        if seq2 == 'A' then -- Up arrow
+          top_line = safe_line_up()
+          redraw()
+        elseif seq2 == 'B' then -- Down arrow
+          top_line = safe_line_down()
+          redraw()
+        elseif seq2 == 'C' then -- Right arrow (page down)
+          top_line = safe_page_down()
+          redraw()
+        elseif seq2 == 'D' then -- Left arrow (page up)
+          top_line = safe_page_up()
+          redraw()
+        end
+      end
     end
   end
+
+  -- Ensure terminal state is restored on normal exit
+  restore_terminal_state()
 end
 
 ---Get version information
