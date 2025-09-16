@@ -197,12 +197,23 @@ end
 ---@param opts table Display options including filepath
 function M.display_paged_interactive(lines, opts)
   local output = require("nvim-cat.output")
+  local colorscheme = require("nvim-cat.colorscheme")
   local total_lines = #lines
   local top_line = 1
 
   -- Get terminal dimensions
   local view_height = term_dimensions.lines - 1 -- Account for status bar
   local view_width = term_dimensions.cols
+
+  -- Get nvim Normal background color for consistent theming
+  local normal_attrs = colorscheme.get_highlight_attrs("Normal")
+  local bg_color_seq = ""
+  local clear_color_seq = ""
+  if normal_attrs and normal_attrs.bg then
+    local r, g, b = output._parse_color_to_rgb(normal_attrs.bg)
+    bg_color_seq = "\27[48;2;" .. r .. ";" .. g .. ";" .. b .. "m"
+    clear_color_seq = "\27[K" -- Clear to end of line with current background
+  end
 
   -- Terminal state management for safe recovery
   local terminal_state_saved = false
@@ -224,22 +235,28 @@ function M.display_paged_interactive(lines, opts)
   -- Set up signal handler for cleanup
   local function cleanup_and_exit()
     restore_terminal_state()
-    io.write("\27[2J\27[H") -- Clear screen
+    io.write("\27[0m\27[2J\27[H") -- Reset colors and clear screen
     io.flush()
     os.exit(0)
   end
 
   local function redraw()
-    -- Clear screen
-    io.write("\27[2J\27[H")
+    -- Set background color and clear screen
+    io.write(bg_color_seq .. "\27[2J\27[H")
     io.flush()
 
     -- Determine visible lines
     local end_line = math.min(top_line + view_height - 1, total_lines)
 
-    -- Display lines
+    -- Display lines with consistent background
     for i = top_line, end_line do
-      io.write(lines[i] .. "\n")
+      io.write(lines[i] .. clear_color_seq .. "\n")
+    end
+
+    -- Fill remaining screen lines with background color
+    local lines_displayed = end_line - top_line + 1
+    for i = lines_displayed + 1, view_height do
+      io.write(clear_color_seq .. "\n")
     end
     io.flush()
 
@@ -254,8 +271,8 @@ function M.display_paged_interactive(lines, opts)
       status_text = status_text .. string.rep(" ", padding)
     end
 
-    -- Inverse video for status bar
-    io.write("\27[7m" .. status_text .. "\27[0m")
+    -- Inverse video for status bar with proper background
+    io.write("\27[7m" .. status_text .. "\27[0m" .. bg_color_seq .. clear_color_seq)
     io.flush()
   end
 
@@ -345,6 +362,8 @@ function M.display_paged_interactive(lines, opts)
 
   -- Ensure terminal state is restored on normal exit
   restore_terminal_state()
+  io.write("\27[0m") -- Reset colors
+  io.flush()
 end
 
 ---Get version information
