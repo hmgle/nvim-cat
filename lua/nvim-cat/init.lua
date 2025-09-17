@@ -130,7 +130,10 @@ function M.cat_single_file(filepath, opts)
   -- Display with paging if needed
   -- Page if content height is greater than terminal height (minus 1 for status bar)
   if paging_enabled and #output_lines > (term_dimensions.lines - 1) then
-    M.display_paged_interactive(output_lines, { filepath = filepath })
+    M.display_paged_interactive(output_lines, {
+      filepath = filepath,
+      use_global_background = use_global_bg,
+    })
   else
     M.display_immediate(output_lines, use_global_bg)
   end
@@ -164,7 +167,10 @@ function M.display_immediate(lines, use_global_bg)
   
   -- Optimized output with batched writes
   local display_lines = {}
-  local terminal_width = use_global_bg and term_dimensions.cols or nil
+  local terminal_width
+  if use_global_bg then
+    terminal_width = tonumber(term_dimensions.cols) or 80
+  end
   
   -- Start global background if requested
   if use_global_bg then
@@ -196,24 +202,18 @@ end
 ---@param lines string[] Lines to display
 ---@param opts table Display options including filepath
 function M.display_paged_interactive(lines, opts)
+  opts = opts or {}
   local output = require("nvim-cat.output")
-  local colorscheme = require("nvim-cat.colorscheme")
   local total_lines = #lines
   local top_line = 1
+  local use_global_bg = opts.use_global_background ~= false
 
   -- Get terminal dimensions
-  local view_height = term_dimensions.lines - 1 -- Account for status bar
-  local view_width = term_dimensions.cols
-
-  -- Get nvim Normal background color for consistent theming
-  local normal_attrs = colorscheme.get_highlight_attrs("Normal")
-  local bg_color_seq = ""
-  local clear_color_seq = ""
-  if normal_attrs and normal_attrs.bg then
-    local r, g, b = output._parse_color_to_rgb(normal_attrs.bg)
-    bg_color_seq = "\27[48;2;" .. r .. ";" .. g .. ";" .. b .. "m"
-    clear_color_seq = "\27[K" -- Clear to end of line with current background
+  local view_height = (tonumber(term_dimensions.lines) or 24) - 1 -- Account for status bar
+  if view_height < 1 then
+    view_height = 1
   end
+  local view_width = tonumber(term_dimensions.cols) or 80
 
   -- Terminal state management for safe recovery
   local terminal_state_saved = false
@@ -235,35 +235,42 @@ function M.display_paged_interactive(lines, opts)
   -- Set up signal handler for cleanup
   local function cleanup_and_exit()
     restore_terminal_state()
-    io.write("\27[0m\27[2J\27[H") -- Reset colors and clear screen
+    io.write("\27[2J\27[H") -- Clear screen
     io.flush()
     os.exit(0)
   end
 
   local function redraw()
-    -- Set background color and clear screen
-    io.write(bg_color_seq .. "\27[2J\27[H")
+    -- Clear screen
+    io.write("\27[2J\27[H")
     io.flush()
 
     -- Determine visible lines
-    local end_line = math.min(top_line + view_height - 1, total_lines)
+    local end_line = total_lines > 0 and math.min(top_line + view_height - 1, total_lines) or 0
 
-    -- Display lines with consistent background
-    for i = top_line, end_line do
-      io.write(lines[i] .. clear_color_seq .. "\n")
+    if use_global_bg then
+      io.write(output.start_global_background())
     end
 
-    -- Fill remaining screen lines with background color
-    local lines_displayed = end_line - top_line + 1
-    for i = lines_displayed + 1, view_height do
-      io.write(clear_color_seq .. "\n")
+    -- Display lines with optional background fill
+    for offset = 0, view_height - 1 do
+      local index = top_line + offset
+      local line = lines[index] or ""
+      if use_global_bg then
+        line = output.apply_line_background(line, view_width)
+      end
+      io.write(line .. "\n")
+    end
+
+    if use_global_bg then
+      io.write(output.end_global_background())
     end
     io.flush()
 
     -- Draw status bar
-    local percentage = math.floor((end_line / total_lines) * 100)
+    local percentage = total_lines > 0 and math.floor((end_line / total_lines) * 100) or 0
     local status_text = string.format(" %s | %d-%d/%d (%d%%) | j/k, space/f/b, g/G, q to quit ",
-      opts.filepath, top_line, end_line, total_lines, percentage)
+      opts.filepath or "nvim-cat", top_line, end_line, total_lines, percentage)
 
     -- Pad status bar to full width
     local padding = view_width - #status_text
@@ -271,8 +278,8 @@ function M.display_paged_interactive(lines, opts)
       status_text = status_text .. string.rep(" ", padding)
     end
 
-    -- Inverse video for status bar with proper background
-    io.write("\27[7m" .. status_text .. "\27[0m" .. bg_color_seq .. clear_color_seq)
+    -- Inverse video for status bar
+    io.write("\27[7m" .. status_text .. "\27[0m")
     io.flush()
   end
 
@@ -362,8 +369,6 @@ function M.display_paged_interactive(lines, opts)
 
   -- Ensure terminal state is restored on normal exit
   restore_terminal_state()
-  io.write("\27[0m") -- Reset colors
-  io.flush()
 end
 
 ---Get version information

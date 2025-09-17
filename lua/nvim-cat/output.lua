@@ -4,55 +4,116 @@ local M = {}
 
 -- Global background state
 M._global_bg_active = false
+M._global_background_sequence = nil
 
 ---Start global background mode with Normal background color
 ---@return string ANSI sequence to start global background
 function M.start_global_background()
   M._global_bg_active = true
-  return "" -- No global sequence needed, handled per-line
+
+  local colorscheme = require("nvim-cat.colorscheme")
+  local normal_attrs = colorscheme.get_highlight_attrs("Normal")
+  if not normal_attrs or not normal_attrs.bg then
+    M._global_background_sequence = nil
+    return ""
+  end
+
+  local r, g, b = M._parse_color_to_rgb(normal_attrs.bg)
+  local esc = string.char(27)
+  M._global_background_sequence = esc .. "[48;2;" .. r .. ";" .. g .. ";" .. b .. "m"
+  return M._global_background_sequence
 end
 
 ---End global background mode and reset colors
 ---@return string ANSI sequence to reset colors
 function M.end_global_background()
   M._global_bg_active = false
-  return "" -- No global sequence needed
+  M._global_background_sequence = nil
+  return string.char(27) .. "[0m"
 end
 
 ---Apply background color to a line to fill the entire width
 ---@param line string Line content
----@param terminal_width? number Terminal width (default 80)
----@return string Line with background padding and proper line clearing
+---@param terminal_width? number Optional terminal width (unused)
+---@return string Line wrapped with background clearing
 function M.apply_line_background(line, terminal_width)
   if not M._global_bg_active then
     return line
   end
-  
-  terminal_width = terminal_width or 80
-  local esc = string.char(27)
-  
-  -- Get global background color
-  local colorscheme = require("nvim-cat.colorscheme")
-  local normal_attrs = colorscheme.get_highlight_attrs("Normal")
-  if not normal_attrs or not normal_attrs.bg then
+
+  local bg_seq = M._global_background_sequence
+  if not bg_seq or bg_seq == "" then
     return line
   end
-  
-  local r, g, b = M._parse_color_to_rgb(normal_attrs.bg)
-  local bg_seq = esc .. "[48;2;" .. r .. ";" .. g .. ";" .. b .. "m"
-  local reset_seq = esc .. "[0m"
-  
-  -- Calculate actual text length without ANSI sequences
-  local clean_line = line:gsub("\27%[[%d;]*m", "")
-  local actual_length = vim.fn.strwidth(clean_line)
-  
-  -- Create full-width background line
-  local padding_needed = math.max(0, terminal_width - actual_length)
-  local padding = string.rep(" ", padding_needed)
-  
-  -- Simple approach: wrap the line with background and clear to end
-  -- The line already has syntax highlighting with proper background-aware resets
-  return bg_seq .. line .. esc .. "[K" .. reset_seq
+
+  -- Expand tab characters so the cleared background covers the visual span
+  if line:find("\t", 1, true) then
+    local tabstop = tonumber(vim.o.tabstop) or 8
+    line = M._expand_tabs_preserving_ansi(line, tabstop)
+  end
+
+  local esc = string.char(27)
+
+  -- Clear to end-of-line while the Normal background is active so blank
+  -- space inherits the colorscheme. We keep the signature for compatibility
+  -- but no longer need the terminal width when using CSI K.
+  local cleared_line = bg_seq .. line .. esc .. "[K"
+
+  return cleared_line .. esc .. "[0m"
+end
+
+---Expand tab characters into spaces while preserving ANSI escape sequences
+---@param line string Line content possibly containing tabs
+---@param tabstop number Tab width
+---@return string Line with tabs expanded
+function M._expand_tabs_preserving_ansi(line, tabstop)
+  local result = {}
+  local col = 0
+  local i = 1
+  local length = #line
+
+  while i <= length do
+    local byte = line:byte(i)
+    if byte == 27 then
+      local esc_seq = line:match("^\27%[[0-9;]*[A-Za-z]", i)
+      if esc_seq then
+        table.insert(result, esc_seq)
+        i = i + #esc_seq
+      else
+        table.insert(result, string.char(byte))
+        i = i + 1
+      end
+    else
+      local char = string.char(byte)
+      if char == "\t" then
+        local spaces = tabstop - (col % tabstop)
+        table.insert(result, string.rep(" ", spaces))
+        col = col + spaces
+        i = i + 1
+      else
+        local char_len = 1
+        if byte >= 240 then
+          char_len = 4
+        elseif byte >= 224 then
+          char_len = 3
+        elseif byte >= 192 then
+          char_len = 2
+        end
+
+        local grapheme = line:sub(i, i + char_len - 1)
+        table.insert(result, grapheme)
+
+        local ok, width = pcall(vim.fn.strdisplaywidth, grapheme)
+        if not ok or width <= 0 then
+          width = char_len
+        end
+        col = col + width
+        i = i + char_len
+      end
+    end
+  end
+
+  return table.concat(result)
 end
 
 ---Format lines with decorations (line numbers, etc.)
