@@ -46,6 +46,8 @@ function M.apply_line_background(line, terminal_width)
     return line
   end
 
+  line = line or ""
+
   -- Expand tab characters so the cleared background covers the visual span
   if line:find("\t", 1, true) then
     local tabstop = tonumber(vim.o.tabstop) or 8
@@ -54,10 +56,14 @@ function M.apply_line_background(line, terminal_width)
 
   local esc = string.char(27)
 
+  -- Ensure we restore the background after any hard reset sequences so the
+  -- terminal fill inherits the configured backdrop.
+  line = line:gsub(esc .. "%[0m", esc .. "[0m" .. bg_seq)
+
   -- Clear to end-of-line while the Normal background is active so blank
   -- space inherits the colorscheme. We keep the signature for compatibility
   -- but no longer need the terminal width when using CSI K.
-  local cleared_line = bg_seq .. line .. esc .. "[K"
+  local cleared_line = bg_seq .. line .. bg_seq .. esc .. "[K"
 
   return cleared_line .. esc .. "[0m"
 end
@@ -131,7 +137,16 @@ function M.format_lines(lines, opts)
   
   -- Add header if requested
   if opts.show_header and filepath then
-    table.insert(formatted, M.format_header(filepath, filetype))
+    local header_text = M.format_header(filepath, filetype)
+    if header_text and header_text ~= "" then
+      local header_lines = vim.split(header_text, "\n", {
+        plain = true,
+        trimempty = false,
+      })
+      for _, header_line in ipairs(header_lines) do
+        table.insert(formatted, header_line)
+      end
+    end
     table.insert(formatted, "") -- Empty line after header
   end
   
