@@ -183,17 +183,11 @@ done
 cat >> "$TEMP_SCRIPT" << EOF
 }
 
-for i, file in ipairs(files) do
-    if #files > 1 and i > 1 then
-        print() -- Empty line between files
-    end
-    
-    local opts = {
-        show_header = $SHOW_HEADER and #files > 1
-    }
-    
-    nvim_cat.cat(file, opts)
-end
+local opts = {
+    show_header = $SHOW_HEADER and #files > 1
+}
+
+nvim_cat.cat(files, opts)
 EOF
 
 # Run Neovim with the script
