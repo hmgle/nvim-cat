@@ -20,6 +20,53 @@ function M.set_term_dimensions(lines, cols)
   term_dimensions.cols = cols or term_dimensions.cols
 end
 
+local function resolve_display_options(opts)
+  local cfg = config.get()
+  return {
+    show_line_numbers = opts.show_line_numbers ~= nil and opts.show_line_numbers or cfg.show_line_numbers,
+    paging_enabled = opts.paging ~= nil and opts.paging or cfg.paging.enabled,
+    lines_per_page = opts.lines_per_page or cfg.paging.lines_per_page,
+    use_global_background = opts.use_global_background ~= nil and opts.use_global_background or cfg.use_global_background,
+  }
+end
+
+local function build_file_output(filepath, opts, display_opts)
+  display_opts = display_opts or resolve_display_options(opts)
+
+  local lines, err = utils.read_file(filepath)
+  if not lines then
+    local message = err or ("Error reading file: " .. filepath)
+    return nil, message
+  end
+
+  local filetype = filedetect.detect_filetype(filepath)
+
+  local highlighted_lines = lines
+  if filetype and filedetect.supports_highlighting(filetype) then
+    highlighted_lines = M.apply_syntax_highlighting(lines, filetype)
+  end
+
+  local format_opts = {
+    show_line_numbers = display_opts.show_line_numbers,
+    filepath = filepath,
+    filetype = filetype,
+  }
+
+  if opts.show_header then
+    format_opts.show_header = true
+  end
+
+  local formatted_lines = M.format_output(highlighted_lines, format_opts)
+
+  return {
+    filepath = filepath,
+    filetype = filetype,
+    lines = formatted_lines,
+    display_line_count = #formatted_lines,
+    source_line_count = #lines,
+  }
+end
+
 
 ---Setup nvim-cat with user configuration
 ---@param opts? NvimCatConfig User configuration options
@@ -85,58 +132,45 @@ end
 ---Display a single file with syntax highlighting
 ---@param filepath string Path to the file
 ---@param opts? table Additional options
+---@return string|nil action Pager action when interactive ("next", "prev", "quit")
 function M.cat_single_file(filepath, opts)
   opts = opts or {}
-  
-  -- Optimized file existence check (already done in calling function)
-  -- Skip redundant file_exists call since we already validated the file
-  
-  -- Read file contents
-  local lines, err = utils.read_file(filepath)
-  if not lines then
-    vim.notify("Error reading file: " .. (err or "unknown error"), vim.log.levels.ERROR)
-    return
+
+  local display_opts = resolve_display_options(opts)
+  local file_output, read_err = build_file_output(filepath, opts, display_opts)
+  if not file_output then
+    if read_err and read_err ~= "" then
+      vim.notify(read_err, vim.log.levels.ERROR)
+    end
+    return nil
   end
-  
-  -- Detect filetype
-  local filetype = filedetect.detect_filetype(filepath)
-  
-  -- Get configuration
-  local cfg = config.get()
-  local show_line_numbers = opts.show_line_numbers ~= nil and opts.show_line_numbers or cfg.show_line_numbers
-  local paging_enabled = opts.paging ~= nil and opts.paging or cfg.paging.enabled
-  local lines_per_page = opts.lines_per_page or cfg.paging.lines_per_page
-  local use_global_bg = opts.use_global_background ~= nil and opts.use_global_background or cfg.use_global_background
-  
-  -- Set global background state before highlighting
-  local output = require("nvim-cat.output")
-  if use_global_bg then
-    output.start_global_background()
-  end
-  
-  -- Apply syntax highlighting if supported
-  local highlighted_lines = lines
-  if filetype and filedetect.supports_highlighting(filetype) then
-    highlighted_lines = M.apply_syntax_highlighting(lines, filetype)
-  end
-  
-  -- Format output
-  local output_lines = M.format_output(highlighted_lines, {
-    show_line_numbers = show_line_numbers,
-    filepath = filepath,
-    filetype = filetype
-  })
-  
-  -- Display with paging if needed
-  -- Page if content height is greater than terminal height (minus 1 for status bar)
-  if paging_enabled and #output_lines > (term_dimensions.lines - 1) then
-    M.display_paged_interactive(output_lines, {
-      filepath = filepath,
-      use_global_background = use_global_bg,
+
+  local output_lines = file_output.lines
+
+  if display_opts.paging_enabled and #output_lines > (term_dimensions.lines - 1) then
+    local segments = {
+      {
+        kind = "file",
+        index = 1,
+        filepath = file_output.filepath,
+        filetype = file_output.filetype,
+        start_line = 1,
+        end_line = #output_lines,
+        content_start = 1,
+        content_end = #output_lines,
+        content_length = #output_lines,
+        file_index = 1,
+      },
+    }
+    return M.display_paged_interactive(output_lines, {
+      entries = segments,
+      use_global_background = display_opts.use_global_background,
     })
   else
-    M.display_immediate(output_lines, use_global_bg)
+    M.display_immediate(output_lines, display_opts.use_global_background)
   end
+
+  return nil
 end
 
 ---Apply syntax highlighting to lines
